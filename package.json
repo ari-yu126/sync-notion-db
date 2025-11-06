@@ -1,0 +1,17 @@
+{
+  "name": "cnx-sync-notion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sync": "node --env-file=.env.local scripts/sync-place.js",
+    "sync:ci": "node scripts/sync-place.js"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.14",
+    "openai": "^4.57.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

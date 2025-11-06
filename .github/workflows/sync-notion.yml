@@ -1,0 +1,41 @@
+name: Sync Notion Places
+
+on:
+  workflow_dispatch: # 수동 실행
+  # 필요하면 정기 실행도 추가
+  # schedule:
+  #   - cron: "0 0 * * 1-5"   # 매주 월~금 00:00 UTC (KST 09:00)
+
+permissions:
+  contents: read  # 최소 권한
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    # 동시 실행 방지(수동으로 여러 번 눌러도 1개만)
+    concurrency:
+      group: sync-notion-places
+      cancel-in-progress: true
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run sync script
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+        run: node scripts/sync-place.js

@@ -1,41 +1,57 @@
 name: Sync Notion Places
 
 on:
-  workflow_dispatch: # 수동 실행
-  # 필요하면 정기 실행도 추가
-  # schedule:
-  #   - cron: "0 0 * * 1-5"   # 매주 월~금 00:00 UTC (KST 09:00)
-
-permissions:
-  contents: read  # 최소 권한
+  workflow_dispatch:
 
 jobs:
   sync:
     runs-on: ubuntu-latest
-
-    # 동시 실행 방지(수동으로 여러 번 눌러도 1개만)
-    concurrency:
-      group: sync-notion-places
-      cancel-in-progress: true
-
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      - name: Install dependencies
+      - name: Quick sanity check (lockfile & Node)
+        run: |
+          echo "Node $(node -v)"
+          test -f package-lock.json && echo "✅ package-lock.json found" || (echo "::error::❌ package-lock.json missing"; exit 1)
+          test -f scripts/sync-place.js && echo "✅ sync script found" || (echo "::error::❌ scripts/sync-place.js missing"; exit 1)
+
+      - name: Check required secrets are set
+        env:
+          NOTION_KEY: ${{ secrets.NOTION_KEY }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          NEXT_PUBLIC_KAKAO_MAP_KEY: ${{ secrets.NEXT_PUBLIC_KAKAO_MAP_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          for V in NOTION_KEY NOTION_DATABASE_ID NEXT_PUBLIC_KAKAO_MAP_KEY; do
+            if [ -z "${!V}" ]; then
+              echo "::error::Missing secret: $V"
+              exit 1
+            else
+              echo "✅ $V is set"
+            fi
+          done
+          # OpenAI는 선택
+          if [ -z "${OPENAI_API_KEY}" ]; then
+            echo "ℹ️ OPENAI_API_KEY not set (summary는 기본문구 fallback)"
+          else
+            echo "✅ OPENAI_API_KEY is set"
+          fi
+
+      - name: Install deps (lockfile-based)
         run: npm ci
 
       - name: Run sync script
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_KEY: ${{ secrets.NOTION_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          NEXT_PUBLIC_KAKAO_MAP_KEY: ${{ secrets.NEXT_PUBLIC_KAKAO_MAP_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: node scripts/sync-place.js

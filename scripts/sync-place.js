@@ -80,10 +80,11 @@ async function updateNotion(pageId, { Kakao, Summary, Status }) {
   }
 }
 
-// ───── OpenAI summary (수정 버전)
+// ───── OpenAI summary (JS 버전)
+import OpenAI from 'openai';
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
 
-function safeParseJSON(txt: string) {
+function safeParseJSON(txt) {
   try { return JSON.parse(txt); } catch { return null; }
 }
 
@@ -100,12 +101,13 @@ async function createSummary({ name, location, mood, service }) {
   try {
     const resp = await openai.responses.create({
       model: "gpt-4o-mini",
-      input: `다음 정보를 바탕으로 1문장 감상. 과장금지, 담백(10~20자), 이모지/특수문자/해시태그 금지:
+      input:
+        `다음 정보를 바탕으로 1문장 감상. 과장금지, 담백(10~20자), 이모지/특수문자/해시태그 금지:
 - 이름:${name}
 - 지역:${location || "-"}
 - 분위기:${Array.isArray(mood)?mood.join(', '):mood||"-"}
 - 서비스:${Array.isArray(service)?service.join(', '):service||"-"}`,
-      // ✅ 변경 포인트: response_format → text.format
+      // ✅ response_format → text.format 로 변경
       text: {
         format: {
           type: "json_schema",
@@ -114,18 +116,17 @@ async function createSummary({ name, location, mood, service }) {
       }
     });
 
-    // ✅ 신규 Responses API 파싱(안전 가드)
+    // ✅ Responses API 파싱 (여러 경로 대비)
     const raw =
-      (resp as any).output_text ??
-      (resp as any).output?.[0]?.content?.[0]?.text ??
+      resp.output_text ??
+      (resp.output && resp.output[0] && resp.output[0].content &&
+       resp.output[0].content[0] && resp.output[0].content[0].text) ||
       "";
 
     const data = safeParseJSON(raw);
-    const summary = data?.summary?.trim();
+    const summary = data && typeof data.summary === 'string' ? data.summary.trim() : '';
 
-    // 마지막 안전망
-    if (!summary) return `‘${name}’ 담백한 한 끼에 적합.`;
-    return summary;
+    return summary || `‘${name}’ 담백한 한 끼에 적합.`;
   } catch (e) {
     // 실패 시 기본 문구로 폴백
     return `‘${name}’ 담백한 한 끼에 적합.`;

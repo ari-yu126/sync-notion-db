@@ -26,10 +26,10 @@ jobs:
         env:
           NOTION_KEY: ${{ secrets.NOTION_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          NEXT_PUBLIC_KAKAO_MAP_KEY: ${{ secrets.NEXT_PUBLIC_KAKAO_MAP_KEY }}
+          KAKAO_REST_API: ${{ secrets.KAKAO_REST_API }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          for V in NOTION_KEY NOTION_DATABASE_ID NEXT_PUBLIC_KAKAO_MAP_KEY; do
+          for V in NOTION_KEY NOTION_DATABASE_ID KAKAO_REST_API; do
             if [ -z "${!V}" ]; then
               echo "::error::Missing secret: $V"
               exit 1
@@ -51,7 +51,7 @@ jobs:
         env:
           NOTION_KEY: ${{ secrets.NOTION_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          NEXT_PUBLIC_KAKAO_MAP_KEY: ${{ secrets.NEXT_PUBLIC_KAKAO_MAP_KEY }}
+          KAKAO_REST_API: ${{ secrets.KAKAO_REST_API }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: node scripts/sync-place.js

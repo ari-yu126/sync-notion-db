@@ -2,7 +2,7 @@ import { Client as Notion } from '@notionhq/client';
 import OpenAI from 'openai';
 
 // ───── ENV
-['NOTION_KEY','NOTION_DATABASE_ID','NEXT_PUBLIC_KAKAO_MAP_KEY'].forEach(k=>{
+['NOTION_KEY','NOTION_DATABASE_ID','KAKAO_REST_API'].forEach(k=>{
   if (!process.env[k]) {
     console.error(`❌ Missing ${k} (use .env.local locally / GitHub Secrets in Actions)`);
     process.exit(1);
@@ -10,7 +10,7 @@ import OpenAI from 'openai';
 });
 const notion = new Notion({ auth: process.env.NOTION_KEY });
 const DB_ID  = process.env.NOTION_DATABASE_ID;
-const KAKAO  = process.env.NEXT_PUBLIC_KAKAO_MAP_KEY;
+const KAKAO  = process.env.KAKAO_REST_API;
 
 // ───── Kakao
 async function kakaoSearch(keyword) {

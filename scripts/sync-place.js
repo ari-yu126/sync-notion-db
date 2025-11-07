@@ -116,11 +116,7 @@ async function createSummary({ name, location, mood, service }) {
     });
 
     // ✅ Responses API 파싱 (여러 경로 대비)
-    const raw =
-      resp.output_text ??
-      (resp.output && resp.output[0] && resp.output[0].content &&
-       resp.output[0].content[0] && resp.output[0].content[0].text) ||
-      "";
+    const raw = resp.output_text ?? resp.output?.[0]?.content?.[0]?.text ?? "";
 
     const data = safeParseJSON(raw);
     const summary = data && typeof data.summary === 'string' ? data.summary.trim() : '';

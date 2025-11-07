@@ -88,8 +88,12 @@ function safeParseJSON(txt) {
 }
 
 async function createSummary({ name, location, mood, service }) {
-  // 키 없으면 즉시 기본 문구
-  if (!openai.apiKey) return `‘${name}’ 담백한 한 끼에 적합.`;
+  // 🔎 키 유무 로그
+  const hasKey = !!openai.apiKey;
+  if (!hasKey) {
+    if (process.env.VERBOSE === 'true') console.warn('[OPENAI] no API key → fallback');
+    return `‘${name}’ 담백한 한 끼에 적합.`;
+  }
 
   const schema = {
     type: "object",
@@ -101,12 +105,12 @@ async function createSummary({ name, location, mood, service }) {
     const resp = await openai.responses.create({
       model: "gpt-4o-mini",
       input:
-        `다음 정보를 바탕으로 1문장 감상. 과장금지, 담백(10~20자), 이모지/특수문자/해시태그 금지:
+        `다음 정보를 바탕으로 1문장 감상. 과장금지, 담백하고 짧게(10~30자), 이모지/특수문자/해시태그 금지:
 - 이름:${name}
 - 지역:${location || "-"}
 - 분위기:${Array.isArray(mood)?mood.join(', '):mood||"-"}
 - 서비스:${Array.isArray(service)?service.join(', '):service||"-"}`,
-      // ✅ response_format → text.format 로 변경
+      // ✅ Responses API 신규 포맷
       text: {
         format: {
           type: "json_schema",
@@ -115,15 +119,33 @@ async function createSummary({ name, location, mood, service }) {
       }
     });
 
-    // ✅ Responses API 파싱 (여러 경로 대비)
-    const raw = resp.output_text ?? resp.output?.[0]?.content?.[0]?.text ?? "";
+    // ✅ 응답 파싱 + 진단 로그
+    const raw = resp.output_text?.trim() ?? resp.output?.[0]?.content?.[0]?.text?.trim() ?? "";
+    if (process.env.VERBOSE === 'true') {
+      console.log('[OPENAI] output_text length =', raw.length);
+      if (!raw) console.warn('[OPENAI] empty output_text');
+    }
 
-    const data = safeParseJSON(raw);
+    // 1) JSON 파싱 시도
+    let data = safeParseJSON(raw);
+
+    // 2) 혹시 모델이 평문으로만 준 경우(가끔 있음) → 간단히 JSON으로 감싸 시도
+    if (!data && raw && raw[0] !== '{') {
+      data = safeParseJSON(`{"summary": ${JSON.stringify(raw)}}`);
+      if (process.env.VERBOSE === 'true') console.log('[OPENAI] wrapped plain text to JSON');
+    }
+
     const summary = data && typeof data.summary === 'string' ? data.summary.trim() : '';
 
-    return summary || `‘${name}’ 담백한 한 끼에 적합.`;
+    if (!summary) {
+      if (process.env.VERBOSE === 'true') console.warn('[OPENAI] no summary field → fallback');
+      return `‘${name}’ 담백한 한 끼에 적합.`;
+    }
+    return summary;
   } catch (e) {
-    // 실패 시 기본 문구로 폴백
+    if (process.env.VERBOSE === 'true') {
+      console.warn('[OPENAI] error → fallback:', e?.status || '', e?.message || e);
+    }
     return `‘${name}’ 담백한 한 끼에 적합.`;
   }
 }

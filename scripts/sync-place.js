@@ -81,7 +81,6 @@ async function updateNotion(pageId, { Kakao, Summary, Status }) {
 }
 
 // ───── OpenAI summary (JS 버전)
-import OpenAI from 'openai';
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
 
 function safeParseJSON(txt) {

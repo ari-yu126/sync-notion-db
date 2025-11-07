@@ -16,7 +16,11 @@ const KAKAO  = process.env.KAKAO_REST_API;
 async function kakaoSearch(keyword) {
   const url = `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(keyword)}&size=5`;
   const res = await fetch(url, { headers: { Authorization: `KakaoAK ${KAKAO}` } });
-  if (!res.ok) throw new Error(`Kakao API ${res.status}`);
+  if (!res.ok) {
+    let body = '';
+    try { body = await res.text(); } catch {}
+    throw new Error(`Kakao API ${res.status} :: ${body || 'no body'}`);
+  }
   const j = await res.json();
   return j.documents || [];
 }
@@ -76,26 +80,54 @@ async function updateNotion(pageId, { Kakao, Summary, Status }) {
   }
 }
 
-// ───── OpenAI summary (선택)
+// ───── OpenAI summary (수정 버전)
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
-async function createSummary({ name, location, mood, service }) {
-  if (!process.env.OPENAI_API_KEY) return `‘${name}’ 담백한 한 끼에 적합.`; // 키 없으면 기본 문구
 
-  const schema = { type:"object", properties:{ summary:{ type:"string", maxLength:180 }}, required:["summary"] };
-  const resp = await openai.responses.create({
-    model: "gpt-4o-mini",
-    input:`다음 정보를 바탕으로 1문장 감상. 과장금지, 담백(10~20자), 이모지/특수문자/해시태그 금지:
+function safeParseJSON(txt: string) {
+  try { return JSON.parse(txt); } catch { return null; }
+}
+
+async function createSummary({ name, location, mood, service }) {
+  // 키 없으면 즉시 기본 문구
+  if (!openai.apiKey) return `‘${name}’ 담백한 한 끼에 적합.`;
+
+  const schema = {
+    type: "object",
+    properties: { summary: { type: "string", maxLength: 180 } },
+    required: ["summary"]
+  };
+
+  try {
+    const resp = await openai.responses.create({
+      model: "gpt-4o-mini",
+      input: `다음 정보를 바탕으로 1문장 감상. 과장금지, 담백(10~20자), 이모지/특수문자/해시태그 금지:
 - 이름:${name}
 - 지역:${location || "-"}
 - 분위기:${Array.isArray(mood)?mood.join(', '):mood||"-"}
 - 서비스:${Array.isArray(service)?service.join(', '):service||"-"}`,
-    response_format:{ type:"json_schema", json_schema:{ name:"Summary", schema, strict:true } }
-  });
+      // ✅ 변경 포인트: response_format → text.format
+      text: {
+        format: {
+          type: "json_schema",
+          json_schema: { name: "Summary", schema, strict: true }
+        }
+      }
+    });
 
-  const text = resp.output?.[0]?.content?.[0]?.text || '{}';
-  try {
-    return JSON.parse(text).summary || `‘${name}’ 담백한 한 끼에 적합.`;
-  } catch {
+    // ✅ 신규 Responses API 파싱(안전 가드)
+    const raw =
+      (resp as any).output_text ??
+      (resp as any).output?.[0]?.content?.[0]?.text ??
+      "";
+
+    const data = safeParseJSON(raw);
+    const summary = data?.summary?.trim();
+
+    // 마지막 안전망
+    if (!summary) return `‘${name}’ 담백한 한 끼에 적합.`;
+    return summary;
+  } catch (e) {
+    // 실패 시 기본 문구로 폴백
     return `‘${name}’ 담백한 한 끼에 적합.`;
   }
 }

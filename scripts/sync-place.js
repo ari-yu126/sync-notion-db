@@ -1,21 +1,36 @@
+// scripts/sync-place.js
 import { Client as Notion } from '@notionhq/client';
 import OpenAI from 'openai';
 
-// ───── ENV
-['NOTION_KEY','NOTION_DATABASE_ID','KAKAO_REST_API'].forEach(k=>{
-  if (!process.env[k]) {
-    console.error(`❌ Missing ${k} (use .env.local locally / GitHub Secrets in Actions)`);
-    process.exit(1);
-  }
-});
-const notion = new Notion({ auth: process.env.NOTION_KEY });
-const DB_ID  = process.env.NOTION_DATABASE_ID;
-const KAKAO  = process.env.KAKAO_REST_API;
+// ───── ENV (양쪽 이름 지원 + SKIP_KAKAO 고려)
+const NOTION_TOKEN = process.env.NOTION_TOKEN || process.env.NOTION_KEY || '';
+const DB_ID        = process.env.NOTION_DATABASE_ID || '';
+const KAKAO_KEY    = process.env.KAKAO_REST_API_KEY || process.env.KAKAO_REST_API || '';
+const OPENAI_KEY   = process.env.OPENAI_API_KEY || '';
+const SKIP_KAKAO   = process.env.SKIP_KAKAO === 'true';
+const VERBOSE      = process.env.VERBOSE === 'true';
+const FORCE_SUMMARY= process.env.FORCE_SUMMARY === 'true';
+
+if (!NOTION_TOKEN) {
+  console.error('❌ Missing NOTION_TOKEN (or NOTION_KEY)');
+  process.exit(1);
+}
+if (!DB_ID) {
+  console.error('❌ Missing NOTION_DATABASE_ID');
+  process.exit(1);
+}
+if (!SKIP_KAKAO && !KAKAO_KEY) {
+  console.error('❌ Missing KAKAO_REST_API_KEY (or KAKAO_REST_API). 서버용 REST 키가 필요합니다.');
+  process.exit(1);
+}
+
+const notion = new Notion({ auth: NOTION_TOKEN });
+const openai = new OpenAI({ apiKey: OPENAI_KEY });
 
 // ───── Kakao
 async function kakaoSearch(keyword) {
   const url = `https://dapi.kakao.com/v2/local/search/keyword.json?query=${encodeURIComponent(keyword)}&size=5`;
-  const res = await fetch(url, { headers: { Authorization: `KakaoAK ${KAKAO}` } });
+  const res = await fetch(url, { headers: { Authorization: `KakaoAK ${KAKAO_KEY}` } });
   if (!res.ok) {
     let body = '';
     try { body = await res.text(); } catch {}
@@ -26,7 +41,6 @@ async function kakaoSearch(keyword) {
 }
 function scoreKakao(doc, name, areaText) {
   let s = 0;
-  // 조금 더 느슨하게 매칭
   const n = (name || '').toLowerCase();
   if (doc.place_name?.toLowerCase().includes(n)) s += 3;
   const addr = `${doc.road_address_name || ''} ${doc.address_name || ''}`;
@@ -69,7 +83,6 @@ function readProp(page, key) {
 
 async function updateNotion(pageId, { Kakao, Summary, Status }) {
   const props = {
-    // 🔥 대/소문자 Notion 속성명 맞추기
     Kakao:   Kakao   ? { url: Kakao } : undefined,
     Summary: Summary ? { rich_text: [{ text: { content: Summary } }] } : undefined,
     Status:  Status  ? { select: { name: Status } } : undefined,
@@ -80,77 +93,72 @@ async function updateNotion(pageId, { Kakao, Summary, Status }) {
   }
 }
 
-// ───── OpenAI summary (JS 버전)
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || '' });
-
+// ───── OpenAI summary
 function safeParseJSON(txt) {
   try { return JSON.parse(txt); } catch { return null; }
 }
 
 async function createSummary({ name, location, mood, service }) {
-  // 🔎 키 유무 로그
-  const hasKey = !!openai.apiKey;
-  if (!hasKey) {
-    if (process.env.VERBOSE === 'true') console.warn('[OPENAI] no API key → fallback');
+  if (!OPENAI_KEY) {
+    if (VERBOSE) console.warn('[OPENAI] no API key → fallback');
     return `‘${name}’ 담백한 한 끼에 적합.`;
   }
 
-  const schema = {
-    type: "object",
-    properties: { summary: { type: "string", maxLength: 180 } },
-    required: ["summary"]
-  };
-
   try {
+    const prompt = [
+      '다음 정보를 바탕으로 1문장 요약을 만들어 JSON으로만 반환하세요.',
+      '규칙:',
+      '- 과장 금지, 담백하고 짧게(10~15자)',
+      '- 이모지/특수문자/해시태그 금지',
+      '- 한국어 문장',
+      '- 반드시 아래 형식의 순수 JSON만 반환: {"summary": "<문장>"}',
+      '',
+      `이름: ${name}`,
+      `지역: ${location || '-'}`,
+      `분위기: ${Array.isArray(mood) ? mood.join(', ') : (mood || '-')}`,
+      `서비스: ${Array.isArray(service) ? service.join(', ') : (service || '-')}`,
+    ].join('\n');
+
     const resp = await openai.responses.create({
-      model: "gpt-4o-mini",
-      input:
-        `다음 정보를 바탕으로 1문장 감상. 과장금지, 담백하고 짧게(10~30자), 이모지/특수문자/해시태그 금지:
-- 이름:${name}
-- 지역:${location || "-"}
-- 분위기:${Array.isArray(mood)?mood.join(', '):mood||"-"}
-- 서비스:${Array.isArray(service)?service.join(', '):service||"-"}`,
-      // ✅ Responses API 신규 포맷
-      text: {
-        format: {
-          type: "json_schema",
-          json_schema: { name: "Summary", schema, strict: true }
-        }
-      }
+      model: 'gpt-4o-mini-2024-07-18',
+      input: prompt,
+      // ⚠️ 스키마/format 옵션 사용 안 함 (API 변경 이슈 회피)
     });
 
-    // ✅ 응답 파싱 + 진단 로그
-    const raw = resp.output_text?.trim() ?? resp.output?.[0]?.content?.[0]?.text?.trim() ?? "";
-    if (process.env.VERBOSE === 'true') {
+    const raw = resp.output_text?.trim() ??
+                resp.output?.[0]?.content?.[0]?.text?.trim() ??
+                '';
+
+    if (VERBOSE) {
       console.log('[OPENAI] output_text length =', raw.length);
       if (!raw) console.warn('[OPENAI] empty output_text');
     }
 
-    // 1) JSON 파싱 시도
-    let data = safeParseJSON(raw);
-
-    // 2) 혹시 모델이 평문으로만 준 경우(가끔 있음) → 간단히 JSON으로 감싸 시도
-    if (!data && raw && raw[0] !== '{') {
-      data = safeParseJSON(`{"summary": ${JSON.stringify(raw)}}`);
-      if (process.env.VERBOSE === 'true') console.log('[OPENAI] wrapped plain text to JSON');
+    // JSON 파싱 시도
+    let data = null;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      // 모델이 평문을 냈다면, 안전하게 감싸서 재파싱
+      data = JSON.parse(`{"summary": ${JSON.stringify(raw)}}`);
+      if (VERBOSE) console.log('[OPENAI] wrapped plain text to JSON');
     }
 
-    const summary = data && typeof data.summary === 'string' ? data.summary.trim() : '';
-
+    const summary = typeof data.summary === 'string' ? data.summary.trim() : '';
     if (!summary) {
-      if (process.env.VERBOSE === 'true') console.warn('[OPENAI] no summary field → fallback');
+      if (VERBOSE) console.warn('[OPENAI] no summary field → fallback');
       return `‘${name}’ 담백한 한 끼에 적합.`;
     }
-    return summary;
+    // 길이/금지문자 간단 필터
+    const sanitized = summary.replace(/[#*_\[\]`~<>]/g, '').slice(0, 60).trim();
+    return sanitized || `‘${name}’ 담백한 한 끼에 적합.`;
   } catch (e) {
-    if (process.env.VERBOSE === 'true') {
-      console.warn('[OPENAI] error → fallback:', e?.status || '', e?.message || e);
-    }
+    if (VERBOSE) console.warn('[OPENAI] error → fallback:', e?.status || '', e?.message || e);
     return `‘${name}’ 담백한 한 끼에 적합.`;
   }
 }
 
-// ───── 대상 조회: Name 있고, Kakao/Summary/Status 중 비어있는 행
+// ───── 대상 조회
 async function getTargets() {
   const r = await notion.databases.query({
     database_id: DB_ID,
@@ -181,38 +189,37 @@ async function getTargets() {
     const location  = readProp(p,'Location');
     const mood      = readProp(p,'Mood');
     const service   = readProp(p,'Service');
-    const hasKakao  = readProp(p,'Kakao');   // 🔥 대문자
-    const hasSummary= readProp(p,'Summary'); // 🔥 대문자
-    const hasStatus = readProp(p,'Status');  // 🔥 대문자
+    const hasKakao  = readProp(p,'Kakao');
+    const hasSummary= readProp(p,'Summary');
+    const hasStatus = readProp(p,'Status');
 
     if (!name) continue;
 
     try {
-      // 1) Kakao 검색 → URL + 세부 분류(status)
       let Kakao = hasKakao;
       let Status = hasStatus;
 
-      if (!Kakao || !Status) {
+      if ((!Kakao && !SKIP_KAKAO) || !Status) {
         const q = [name, location].filter(Boolean).join(' ');
-        const docs = await kakaoSearch(q);
+        const docs = SKIP_KAKAO ? [] : await kakaoSearch(q);
         if (docs.length) {
           const ranked = docs.map(d => ({ ...d, _s: scoreKakao(d, name, location) }))
                              .sort((a,b)=> b._s - a._s);
           const best = ranked[0];
-
           if (!Kakao)  Kakao = best.place_url || null;
           if (!Status) Status = mapCuisineFromCategoryName(best.category_name, best.category_group_code) || '기타';
+        } else if (!Status) {
+          Status = '기타';
         }
       }
 
-      // 2) summary (비어 있으면 생성)
       let Summary = hasSummary;
-      if (!Summary) {
+      if (!Summary || FORCE_SUMMARY) {
         Summary = await createSummary({ name, location, mood, service });
       }
 
-      await updateNotion(id, { Kakao, Summary, Status });
-      console.log(`✅ ${name} → Kakao:${!!Kakao}, Status:${Status || '-'}, Summary:${!!Summary}`);
+      await updateNotion(id, { Kakao: SKIP_KAKAO ? undefined : Kakao, Summary, Status });
+      console.log(`✅ ${name} → Kakao:${SKIP_KAKAO ? 'skip' : !!Kakao}, Status:${Status || '-'}, Summary:${!!Summary}`);
     } catch (e) {
       console.error(`🚨 ${name} - ${e.message}`);
     }

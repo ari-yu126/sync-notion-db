@@ -26,9 +26,9 @@ if (!SKIP_KAKAO && !KAKAO_KEY) {
 
 const notion = new Notion({ auth: NOTION_TOKEN });
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
-if (!OPENAI_KEY || !OPENAI_KEY.startsWith('sk-')) {
-  console.error('❌ Invalid OPENAI_API_KEY format. Check GitHub Secrets.');
-  process.exit(1);
+const looksLikeKey = typeof OPENAI_KEY === 'string' && /^sk-/.test(OPENAI_KEY);
+if (!looksLikeKey) {
+  console.warn('⚠️ OPENAI_API_KEY looks unusual (no sk- prefix). Will try anyway.');
 }
 
 // ───── Kakao
@@ -116,13 +116,13 @@ function isWeakSummary(text) {
   // “정보 없음/부족/찾을 수 없음/데이터 없음” 류 방어
   const bad = /(정보\s*(없음|부족)|데이터\s*없음|찾을\s*수\s*없음|no\s*info|not\s*enough)/i;
   // 한글/영문 글자수 너무 짧은 경우(예: “좋아요”, “무난” 등)
-  const tooShort = t.replace(/\s/g, '').length < 6;
+  const tooShort = t.replace(/\s/g, '').length < 4;
   return bad.test(t) || tooShort;
 }
 
 async function createSummary({ name, location, mood, service, status: cuisineStatus }) {
   if (!OPENAI_KEY) {
-    if (VERBOSE) console.warn('[OPENAI] no API key → fallback');
+    if (VERBOSE) console.warn('[OPENAI][MISSKEY] no API key → fallback');
     return buildPlaceTagline({ name, location, status: cuisineStatus });
   }
 
@@ -144,16 +144,24 @@ async function createSummary({ name, location, mood, service, status: cuisineSta
     ].join('\n');
 
     const resp = await openai.responses.create({
-      model: 'gpt-4o-mini-2024-07-18',
+      model: 'gpt-4o-mini',
       input: prompt,
+      text: { format: 'json' },
     });
 
-    const raw = resp.output_text?.trim()
-              ?? resp.output?.[0]?.content?.[0]?.text?.trim()
-              ?? '';
+    let raw = '';
+    raw = resp.output_text?.trim?.() || raw;
+    if (!raw && Array.isArray(resp.output)) {
+      const c = resp.output[0]?.content?.[0];
+      if (c?.type === 'output_text' && c?.text) raw = c.text.trim();
+      if (c?.type === 'json' && c?.json) raw = JSON.stringify(c.json);
+    }
+    if (!raw && resp?.content?.[0]?.text?.length) {
+      raw = resp.content[0].text[0]?.text?.trim?.() || '';
+    }
 
     if (VERBOSE) {
-      console.log('[OPENAI] output_text length =', raw.length);
+      console.log('[OPENAI][RAW]', raw);
       if (!raw) console.warn('[OPENAI] empty output_text');
     }
 
@@ -162,18 +170,19 @@ async function createSummary({ name, location, mood, service, status: cuisineSta
       data = JSON.parse(raw);
     } catch {
       data = JSON.parse(`{"summary": ${JSON.stringify(raw)}}`);
-      if (VERBOSE) console.log('[OPENAI] wrapped plain text to JSON');
+      if (VERBOSE) console.log('[OPENAI][WRAP] wrapped plain text to JSON');
     }
 
     const summary = typeof data.summary === 'string' ? data.summary.trim() : '';
     const sanitized = summary.replace(/[#*_\[\]`~<>]/g, '').slice(0, 60).trim();
 
     if (!sanitized || isWeakSummary(sanitized)) {
+      if (VERBOSE) console.log('[OPENAI][WEAK] → fallback');
       return buildPlaceTagline({ name, location, status: cuisineStatus });
     }
     return sanitized;
   } catch (e) {
-    if (VERBOSE) console.warn('[OPENAI] error → fallback:', e?.status || '', e?.message || e);
+    if (VERBOSE) console.warn('[OPENAI][ERROR] → fallback:', e?.status || '', e?.message || e);
     return buildPlaceTagline({ name, location, status: cuisineStatus });
   }
 }
@@ -237,7 +246,9 @@ async function getTargets() {
 
       let Summary = hasSummary;
       if (!Summary || FORCE_SUMMARY) {
-        Summary = await createSummary({ name, location, mood, service, status: Status });
+        const out = await createSummary({ name, location, mood, service, status: Status });
+        Summary = out;
+        if (VERBOSE) console.log('[SUMMARY][SOURCE]', out.startsWith('용산구의 숨겨진') ? 'fallback' : 'openai', name);
       }
 
       await updateNotion(id, { Kakao: SKIP_KAKAO ? undefined : Kakao, Summary, Status });

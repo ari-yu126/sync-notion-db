@@ -98,7 +98,7 @@ function safeParseJSON(txt) {
   try { return JSON.parse(txt); } catch { return null; }
 }
 
-function buildPlaceTagline({ name, location }) {
+function buildPlaceTagline({ name, location, status }) {
   const loc = (location && String(location).trim()) || '용산구';
   const st  = (status && String(status).trim()) || '';
   const nm  = (name && String(name).trim()) || '이름미정';
@@ -116,10 +116,10 @@ function isWeakSummary(text) {
   return bad.test(t) || tooShort;
 }
 
-async function createSummary({ name, location, mood, service }) {
+async function createSummary({ name, location, mood, service, status:cuisineStatus }) {
   if (!OPENAI_KEY) {
     if (VERBOSE) console.warn('[OPENAI] no API key → fallback');
-    return `‘${name}’ 담백한 한 끼에 적합.`;
+    return buildPlaceTagline({ name, location, status: cuisineStatus });
   }
 
   try {
@@ -163,19 +163,15 @@ async function createSummary({ name, location, mood, service }) {
     }
 
     const summary = typeof data.summary === 'string' ? data.summary.trim() : '';
-    if (!summary) {
-      if (VERBOSE) console.warn('[OPENAI] no summary field → fallback');
-      return `‘${name}’ 담백한 한 끼에 적합.`;
-    }
-    // 길이/금지문자 간단 필터
     const sanitized = summary.replace(/[#*_\[\]`~<>]/g, '').slice(0, 60).trim();
-    if (isWeakSummary(sanitized)) {
-      return buildPlaceTagline({ name, location });
+
+    if (!sanitized || isWeakSummary(sanitized)) {
+      return buildPlaceTagline({ name, location, status: cuisineStatus });
     }
-    return sanitized || buildPlaceTagline({ name, location });
+    return sanitized;
   } catch (e) {
     if (VERBOSE) console.warn('[OPENAI] error → fallback:', e?.status || '', e?.message || e);
-    return `‘${name}’ 담백한 한 끼에 적합.`;
+    return buildPlaceTagline({ name, location, status: cuisineStatus });
   }
 }
 
@@ -233,10 +229,11 @@ async function getTargets() {
           Status = '기타';
         }
       }
+      if (!Status) Status = '기타';
 
       let Summary = hasSummary;
       if (!Summary || FORCE_SUMMARY) {
-        Summary = await createSummary({ name, location, mood, service, status });
+        Summary = await createSummary({ name, location, mood, service, status: Status });
       }
 
       await updateNotion(id, { Kakao: SKIP_KAKAO ? undefined : Kakao, Summary, Status });

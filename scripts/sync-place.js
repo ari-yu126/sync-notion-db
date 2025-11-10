@@ -98,6 +98,23 @@ function safeParseJSON(txt) {
   try { return JSON.parse(txt); } catch { return null; }
 }
 
+function buildPlaceTagline({ name, location }) {
+  const loc = (location && String(location).trim()) || '용산구';
+  const status = (status && String(status).trim()) || '기타';
+  const nm  = (name && String(name).trim()) || '이름미정';
+  return `${loc}의 숨겨진 ${status}맛집 ${nm}`;
+}
+
+function isWeakSummary(text) {
+  if (!text) return true;
+  const t = text.trim();
+  // “정보 없음/부족/찾을 수 없음/데이터 없음” 류 방어
+  const bad = /(정보\s*(없음|부족)|데이터\s*없음|찾을\s*수\s*없음|no\s*info|not\s*enough)/i;
+  // 한글/영문 글자수 너무 짧은 경우(예: “좋아요”, “무난” 등)
+  const tooShort = t.replace(/\s/g, '').length < 6;
+  return bad.test(t) || tooShort;
+}
+
 async function createSummary({ name, location, mood, service }) {
   if (!OPENAI_KEY) {
     if (VERBOSE) console.warn('[OPENAI] no API key → fallback');
@@ -111,6 +128,7 @@ async function createSummary({ name, location, mood, service }) {
       '- 과장 금지, 담백하고 짧게(10~15자)',
       '- 이모지/특수문자/해시태그 금지',
       '- 한국어 문장',
+      '- 친근한 구어체 말투',
       '- 반드시 아래 형식의 순수 JSON만 반환: {"summary": "<문장>"}',
       '',
       `이름: ${name}`,
@@ -122,7 +140,6 @@ async function createSummary({ name, location, mood, service }) {
     const resp = await openai.responses.create({
       model: 'gpt-4o-mini-2024-07-18',
       input: prompt,
-      // ⚠️ 스키마/format 옵션 사용 안 함 (API 변경 이슈 회피)
     });
 
     const raw = resp.output_text?.trim() ??
@@ -151,7 +168,10 @@ async function createSummary({ name, location, mood, service }) {
     }
     // 길이/금지문자 간단 필터
     const sanitized = summary.replace(/[#*_\[\]`~<>]/g, '').slice(0, 60).trim();
-    return sanitized || `‘${name}’ 담백한 한 끼에 적합.`;
+    if (isWeakSummary(sanitized)) {
+      return buildPlaceTagline({ name, location });
+    }
+    return sanitized || buildPlaceTagline({ name, location });
   } catch (e) {
     if (VERBOSE) console.warn('[OPENAI] error → fallback:', e?.status || '', e?.message || e);
     return `‘${name}’ 담백한 한 끼에 적합.`;

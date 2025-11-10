@@ -100,9 +100,10 @@ function safeParseJSON(txt) {
 
 function buildPlaceTagline({ name, location }) {
   const loc = (location && String(location).trim()) || '용산구';
-  const status = (status && String(status).trim()) || '기타';
+  const st  = (status && String(status).trim()) || '';
   const nm  = (name && String(name).trim()) || '이름미정';
-  return `${loc}의 숨겨진 ${status}맛집 ${nm}`;
+  const mid = st ? `${st}맛집` : '맛집';
+  return `${loc}의 숨겨진 ${mid} ${nm}`;
 }
 
 function isWeakSummary(text) {
@@ -235,7 +236,7 @@ async function getTargets() {
 
       let Summary = hasSummary;
       if (!Summary || FORCE_SUMMARY) {
-        Summary = await createSummary({ name, location, mood, service });
+        Summary = await createSummary({ name, location, mood, service, status });
       }
 
       await updateNotion(id, { Kakao: SKIP_KAKAO ? undefined : Kakao, Summary, Status });

@@ -100,8 +100,8 @@ function safeParseJSON(txt) {
 
 function buildPlaceTagline({ name, location, status }) {
   const loc = (location && String(location).trim()) || '용산구';
-  const st  = (status && String(status).trim()) || '';
   const nm  = (name && String(name).trim()) || '이름미정';
+  const st  = (status && String(status).trim()) || '';
   const mid = st ? `${st}맛집` : '맛집';
   return `${loc}의 숨겨진 ${mid} ${nm}`;
 }
@@ -116,7 +116,7 @@ function isWeakSummary(text) {
   return bad.test(t) || tooShort;
 }
 
-async function createSummary({ name, location, mood, service, status:cuisineStatus }) {
+async function createSummary({ name, location, mood, service, status: cuisineStatus }) {
   if (!OPENAI_KEY) {
     if (VERBOSE) console.warn('[OPENAI] no API key → fallback');
     return buildPlaceTagline({ name, location, status: cuisineStatus });
@@ -143,21 +143,19 @@ async function createSummary({ name, location, mood, service, status:cuisineStat
       input: prompt,
     });
 
-    const raw = resp.output_text?.trim() ??
-                resp.output?.[0]?.content?.[0]?.text?.trim() ??
-                '';
+    const raw = resp.output_text?.trim()
+              ?? resp.output?.[0]?.content?.[0]?.text?.trim()
+              ?? '';
 
     if (VERBOSE) {
       console.log('[OPENAI] output_text length =', raw.length);
       if (!raw) console.warn('[OPENAI] empty output_text');
     }
 
-    // JSON 파싱 시도
     let data = null;
     try {
       data = JSON.parse(raw);
     } catch {
-      // 모델이 평문을 냈다면, 안전하게 감싸서 재파싱
       data = JSON.parse(`{"summary": ${JSON.stringify(raw)}}`);
       if (VERBOSE) console.log('[OPENAI] wrapped plain text to JSON');
     }
@@ -174,6 +172,7 @@ async function createSummary({ name, location, mood, service, status:cuisineStat
     return buildPlaceTagline({ name, location, status: cuisineStatus });
   }
 }
+
 
 // ───── 대상 조회
 async function getTargets() {

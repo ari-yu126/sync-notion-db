@@ -2,6 +2,19 @@ name: Sync Notion Places
 
 on:
   workflow_dispatch:
+    inputs:
+      force_summary:
+        description: '강제로 요약 재생성 (true/false)'
+        required: false
+        default: 'false'
+      skip_kakao:
+        description: '카카오 검색 스킵 (true/false)'
+        required: false
+        default: 'false'
+      verbose:
+        description: '상세 로그 (true/false)'
+        required: false
+        default: 'true'
 
 jobs:
   sync:
@@ -16,42 +29,53 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Quick sanity check (lockfile & Node)
+      - name: Quick sanity check (lockfile & script)
         run: |
           echo "Node $(node -v)"
           test -f package-lock.json && echo "✅ package-lock.json found" || (echo "::error::❌ package-lock.json missing"; exit 1)
-          test -f scripts/sync-place.js && echo "✅ sync script found" || (echo "::error::❌ scripts/sync-place.js missing"; exit 1)
+          test -f scripts/sync-place.js && echo "✅ scripts/sync-place.js found" || (echo "::error::❌ scripts/sync-place.js missing"; exit 1)
 
-      - name: Check required secrets are set
+      - name: Check required secrets/vars presence
         env:
-          NOTION_KEY: ${{ secrets.NOTION_KEY }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          KAKAO_REST_API: ${{ secrets.KAKAO_REST_API }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN || secrets.NOTION_KEY || secrets.NOTION }}
+          NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID || secrets.NOTION_DATABASE_ID }}
+          KAKAO_REST_API: ${{ secrets.KAKAO_REST_API || secrets.KAKAO_REST_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          for V in NOTION_KEY NOTION_DATABASE_ID KAKAO_REST_API; do
+          required_envs=(NOTION_TOKEN NOTION_DATABASE_ID KAKAO_REST_API OPENAI_API_KEY)
+          for V in "${required_envs[@]}"; do
             if [ -z "${!V}" ]; then
-              echo "::error::Missing secret: $V"
+              echo "::error::Missing required secret/var: $V"
               exit 1
             else
               echo "✅ $V is set"
             fi
           done
-          # OpenAI는 선택
-          if [ -z "${OPENAI_API_KEY}" ]; then
-            echo "ℹ️ OPENAI_API_KEY not set (summary는 기본문구 fallback)"
-          else
-            echo "✅ OPENAI_API_KEY is set"
-          fi
 
       - name: Install deps (lockfile-based)
         run: npm ci
 
+      - name: Show env presence (no secrets)
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN || secrets.NOTION_KEY || secrets.NOTION }}
+          NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID || secrets.NOTION_DATABASE_ID }}
+          KAKAO_REST_API: ${{ secrets.KAKAO_REST_API || secrets.KAKAO_REST_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          FORCE_SUMMARY: ${{ github.event.inputs.force_summary || 'false' }}
+          SKIP_KAKAO: ${{ github.event.inputs.skip_kakao || 'false' }}
+          VERBOSE: ${{ github.event.inputs.verbose || 'true' }}
+        run: |
+          node -e "console.log({HAS_NOTION:!!process.env.NOTION_TOKEN, HAS_DB:!!process.env.NOTION_DATABASE_ID, HAS_KAKAO:!!process.env.KAKAO_REST_API, HAS_OPENAI:!!process.env.OPENAI_API_KEY, FORCE_SUMMARY:process.env.FORCE_SUMMARY, SKIP_KAKAO:process.env.SKIP_KAKAO, VERBOSE:process.env.VERBOSE})"
+
       - name: Run sync script
         env:
-          NOTION_KEY: ${{ secrets.NOTION_KEY }}
-          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          KAKAO_REST_API: ${{ secrets.KAKAO_REST_API }}
+          # 코드에서 읽는 이름과 반드시 매칭!
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN || secrets.NOTION_KEY || secrets.NOTION }}
+          NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID || secrets.NOTION_DATABASE_ID }}
+          KAKAO_REST_API: ${{ secrets.KAKAO_REST_API || secrets.KAKAO_REST_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          # 플래그
+          FORCE_SUMMARY: ${{ github.event.inputs.force_summary || 'false' }}
+          SKIP_KAKAO: ${{ github.event.inputs.skip_kakao || 'false' }}
+          VERBOSE: ${{ github.event.inputs.verbose || 'true' }}
         run: node scripts/sync-place.js

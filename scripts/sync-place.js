@@ -6,7 +6,7 @@ import OpenAI from 'openai';
 const NOTION_TOKEN = process.env.NOTION_TOKEN || process.env.NOTION_KEY || '';
 const DB_ID        = process.env.NOTION_DATABASE_ID || '';
 const KAKAO_KEY    = process.env.KAKAO_REST_API_KEY || process.env.KAKAO_REST_API || '';
-const OPENAI_KEY   = process.env.OPENAI_API_KEY || '';
+const OPENAI_KEY   = (process.env.OPENAI_API_KEY || '').trim();
 const SKIP_KAKAO   = process.env.SKIP_KAKAO === 'true';
 const VERBOSE      = process.env.VERBOSE === 'true';
 const FORCE_SUMMARY= process.env.FORCE_SUMMARY === 'true';
@@ -26,6 +26,10 @@ if (!SKIP_KAKAO && !KAKAO_KEY) {
 
 const notion = new Notion({ auth: NOTION_TOKEN });
 const openai = new OpenAI({ apiKey: OPENAI_KEY });
+if (!OPENAI_KEY || !OPENAI_KEY.startsWith('sk-')) {
+  console.error('❌ Invalid OPENAI_API_KEY format. Check GitHub Secrets.');
+  process.exit(1);
+}
 
 // ───── Kakao
 async function kakaoSearch(keyword) {
@@ -128,8 +132,9 @@ async function createSummary({ name, location, mood, service, status: cuisineSta
       '규칙:',
       '- 과장 금지, 담백하고 짧게(10~15자)',
       '- 이모지/특수문자/해시태그 금지',
+      '- **반드시 명사구로 작성** (종결어미 ~요/~야/~다/~니다 금지)',
       '- 한국어 문장',
-      '- 친근한 구어체 말투',
+      '- 예시: "용산면가 찐맛집", "담백한 국물 우동", "한적한 브런치 카페"',
       '- 반드시 아래 형식의 순수 JSON만 반환: {"summary": "<문장>"}',
       '',
       `이름: ${name}`,

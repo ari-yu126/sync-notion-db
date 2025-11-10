@@ -6,7 +6,7 @@ on:
       force_summary:
         description: '강제로 요약 재생성 (true/false)'
         required: false
-        default: 'false'
+        default: 'true'
       skip_kakao:
         description: '카카오 검색 스킵 (true/false)'
         required: false
@@ -74,6 +74,16 @@ jobs:
           NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID || secrets.NOTION_DATABASE_ID }}
           KAKAO_REST_API: ${{ secrets.KAKAO_REST_API || secrets.KAKAO_REST_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          run: |
+            node -e "const k=(process.env.OPENAI_API_KEY||'').trim(); console.log('LEN',k.length,'HEAD',k.slice(0,6)); if(!k){process.exit(1)}"
+            node -e "
+              const https=require('https');
+              const k=(process.env.OPENAI_API_KEY||'').trim();
+              const req=https.request(
+                {hostname:'api.openai.com',path:'/v1/models',method:'GET',headers:{Authorization:'Bearer '+k}},
+                r=>{console.log('OpenAI /v1/models status=',r.statusCode); r.resume(); if(r.statusCode!==200){process.exit(2)}}
+              ); req.on('error',e=>{console.error(e);process.exit(3)}); req.end();
+            "
           # 플래그
           FORCE_SUMMARY: ${{ github.event.inputs.force_summary || 'false' }}
           SKIP_KAKAO: ${{ github.event.inputs.skip_kakao || 'false' }}

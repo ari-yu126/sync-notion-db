@@ -7,6 +7,10 @@ on:
         description: '강제로 요약 재생성 (true/false)'
         required: false
         default: 'true'
+      force_google:
+        description: '구글 필드 강제 갱신 (true/false)'
+        required: false
+        default: 'true'
       skip_kakao:
         description: '카카오 검색 스킵 (true/false)'
         required: false
@@ -19,6 +23,8 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -37,12 +43,13 @@ jobs:
 
       - name: Check required secrets/vars presence
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN || secrets.NOTION_KEY || secrets.NOTION }}
+          NOTION_TOKEN:       ${{ secrets.NOTION_TOKEN || secrets.NOTION_KEY || secrets.NOTION }}
           NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID || secrets.NOTION_DATABASE_ID }}
-          KAKAO_REST_API: ${{ secrets.KAKAO_REST_API || secrets.KAKAO_REST_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          KAKAO_REST_API:     ${{ secrets.KAKAO_REST_API || secrets.KAKAO_REST_API_KEY }}
+          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY:     ${{ secrets.GOOGLE_API_KEY }}
         run: |
-          required_envs=(NOTION_TOKEN NOTION_DATABASE_ID KAKAO_REST_API OPENAI_API_KEY)
+          required_envs=(NOTION_TOKEN NOTION_DATABASE_ID KAKAO_REST_API OPENAI_API_KEY GOOGLE_API_KEY)
           for V in "${required_envs[@]}"; do
             if [ -z "${!V}" ]; then
               echo "::error::Missing required secret/var: $V"
@@ -57,35 +64,54 @@ jobs:
 
       - name: Show env presence (no secrets)
         env:
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN || secrets.NOTION_KEY || secrets.NOTION }}
+          NOTION_TOKEN:       ${{ secrets.NOTION_TOKEN || secrets.NOTION_KEY || secrets.NOTION }}
           NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID || secrets.NOTION_DATABASE_ID }}
-          KAKAO_REST_API: ${{ secrets.KAKAO_REST_API || secrets.KAKAO_REST_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          FORCE_SUMMARY: ${{ github.event.inputs.force_summary || 'false' }}
-          SKIP_KAKAO: ${{ github.event.inputs.skip_kakao || 'false' }}
-          VERBOSE: ${{ github.event.inputs.verbose || 'true' }}
+          KAKAO_REST_API:     ${{ secrets.KAKAO_REST_API || secrets.KAKAO_REST_API_KEY }}
+          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_PROJECT:     ${{ secrets.OPENAI_PROJECT }}
+          GOOGLE_API_KEY:     ${{ secrets.GOOGLE_API_KEY }}
+          FORCE_SUMMARY:      ${{ github.event.inputs.force_summary || 'false' }}
+          FORCE_GOOGLE:       ${{ github.event.inputs.force_google  || 'false' }}
+          SKIP_KAKAO:         ${{ github.event.inputs.skip_kakao    || 'false' }}
+          VERBOSE:            ${{ github.event.inputs.verbose       || 'true'  }}
         run: |
-          node -e "console.log({HAS_NOTION:!!process.env.NOTION_TOKEN, HAS_DB:!!process.env.NOTION_DATABASE_ID, HAS_KAKAO:!!process.env.KAKAO_REST_API, HAS_OPENAI:!!process.env.OPENAI_API_KEY, FORCE_SUMMARY:process.env.FORCE_SUMMARY, SKIP_KAKAO:process.env.SKIP_KAKAO, VERBOSE:process.env.VERBOSE})"
+          node -e "console.log({
+            HAS_NOTION:!!process.env.NOTION_TOKEN,
+            HAS_DB:!!process.env.NOTION_DATABASE_ID,
+            HAS_KAKAO:!!process.env.KAKAO_REST_API,
+            HAS_OPENAI:!!process.env.OPENAI_API_KEY,
+            HAS_GOOGLE:!!process.env.GOOGLE_API_KEY,
+            FORCE_SUMMARY:process.env.FORCE_SUMMARY,
+            FORCE_GOOGLE:process.env.FORCE_GOOGLE,
+            SKIP_KAKAO:process.env.SKIP_KAKAO,
+            VERBOSE:process.env.VERBOSE
+          })"
+
+      # 🔹 OpenAI 키 사전 핑 체크 (env 안에 run 넣지 말고 별도 step)
+      - name: Sanity ping OpenAI
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          node -e "const k=(process.env.OPENAI_API_KEY||'').trim(); console.log('LEN',k.length,'HEAD',k.slice(0,6)); if(!k){process.exit(1)}"
+          node -e "
+            const https=require('https');
+            const k=(process.env.OPENAI_API_KEY||'').trim();
+            const req=https.request(
+              {hostname:'api.openai.com',path:'/v1/models',method:'GET',headers:{Authorization:'Bearer '+k}},
+              r=>{console.log('OpenAI /v1/models status=',r.statusCode); r.resume(); if(r.statusCode!==200){process.exit(2)}}
+            ); req.on('error',e=>{console.error(e);process.exit(3)}); req.end();
+          "
 
       - name: Run sync script
         env:
-          # 코드에서 읽는 이름과 반드시 매칭!
-          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN || secrets.NOTION_KEY || secrets.NOTION }}
+          # 스크립트에서 읽는 이름과 정확히 매칭
+          NOTION_TOKEN:       ${{ secrets.NOTION_TOKEN || secrets.NOTION_KEY || secrets.NOTION }}
           NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID || secrets.NOTION_DATABASE_ID }}
-          KAKAO_REST_API: ${{ secrets.KAKAO_REST_API || secrets.KAKAO_REST_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-          run: |
-            node -e "const k=(process.env.OPENAI_API_KEY||'').trim(); console.log('LEN',k.length,'HEAD',k.slice(0,6)); if(!k){process.exit(1)}"
-            node -e "
-              const https=require('https');
-              const k=(process.env.OPENAI_API_KEY||'').trim();
-              const req=https.request(
-                {hostname:'api.openai.com',path:'/v1/models',method:'GET',headers:{Authorization:'Bearer '+k}},
-                r=>{console.log('OpenAI /v1/models status=',r.statusCode); r.resume(); if(r.statusCode!==200){process.exit(2)}}
-              ); req.on('error',e=>{console.error(e);process.exit(3)}); req.end();
-            "
-          # 플래그
-          FORCE_SUMMARY: ${{ github.event.inputs.force_summary || 'false' }}
-          SKIP_KAKAO: ${{ github.event.inputs.skip_kakao || 'false' }}
-          VERBOSE: ${{ github.event.inputs.verbose || 'true' }}
+          KAKAO_REST_API:     ${{ secrets.KAKAO_REST_API || secrets.KAKAO_REST_API_KEY }}
+          OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          GOOGLE_API_KEY:     ${{ secrets.GOOGLE_API_KEY }}
+          FORCE_SUMMARY:      ${{ github.event.inputs.force_summary || 'false' }}
+          FORCE_GOOGLE:       ${{ github.event.inputs.force_google  || 'false' }}
+          SKIP_KAKAO:         ${{ github.event.inputs.skip_kakao    || 'false' }}
+          VERBOSE:            ${{ github.event.inputs.verbose       || 'true'  }}
         run: node scripts/sync-place.js

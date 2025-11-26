@@ -109,6 +109,7 @@ jobs:
           NOTION_DATABASE_ID: ${{ vars.NOTION_DATABASE_ID || secrets.NOTION_DATABASE_ID }}
           KAKAO_REST_API:     ${{ secrets.KAKAO_REST_API || secrets.KAKAO_REST_API_KEY }}
           OPENAI_API_KEY:     ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_PROJECT:     ${{ secrets.OPENAI_PROJECT || '' }}
           GOOGLE_API_KEY:     ${{ secrets.GOOGLE_API_KEY }}
           FORCE_SUMMARY:      ${{ github.event.inputs.force_summary || 'false' }}
           FORCE_GOOGLE:       ${{ github.event.inputs.force_google  || 'false' }}

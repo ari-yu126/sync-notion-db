@@ -1,4 +1,3 @@
-// scripts/sync-place.js
 import { Client as Notion } from '@notionhq/client';
 import OpenAI from 'openai';
 
@@ -9,6 +8,12 @@ const KAKAO_KEY = process.env.KAKAO_REST_API_KEY || process.env.KAKAO_REST_API |
 const OPENAI_KEY = (process.env.OPENAI_API_KEY || '').trim();
 const OPENAI_PROJECT = (process.env.OPENAI_PROJECT || '').trim();
 const isProjectKey = OPENAI_KEY.startsWith('sk-proj-');
+const openaiUnavailableReason = !OPENAI_KEY
+  ? 'NO_KEY'
+  : isProjectKey && !OPENAI_PROJECT
+  ? 'MISSING_PROJECT'
+  : null;
+const canUseOpenAI = !openaiUnavailableReason;
 const GOOGLE_KEY = (process.env.GOOGLE_API_KEY || '').trim();
 
 const asBoolean = (v) => ['1', 'true', 'yes', 'on'].includes(String(v).toLowerCase());
@@ -38,8 +43,9 @@ if (!SKIP_KAKAO && !KAKAO_KEY) {
   process.exit(1);
 }
 if (isProjectKey && !OPENAI_PROJECT) {
-  console.error('❌ Project key detected but OPENAI_PROJECT is missing');
-  process.exit(1);
+  console.warn(
+    '⚠️ Project key detected but OPENAI_PROJECT is missing. OpenAI summary generation will be skipped.',
+  );
 }
 
 // ───── Utils
@@ -59,7 +65,11 @@ const toLatLng = (loc = {}) => ({
 });
 
 const notion = new Notion({ auth: NOTION_TOKEN });
-const openai = new OpenAI({ apiKey: OPENAI_KEY });
+const openai = canUseOpenAI
+  ? new OpenAI(
+      OPENAI_PROJECT ? { apiKey: OPENAI_KEY, project: OPENAI_PROJECT } : { apiKey: OPENAI_KEY },
+    )
+  : null;
 
 const looksLikeKey = typeof OPENAI_KEY === 'string' && /^sk-/.test(OPENAI_KEY);
 if (!looksLikeKey) {
@@ -298,9 +308,13 @@ function isWeakSummary(text) {
 }
 
 async function createSummary({ name, location, mood, service, status: cuisineStatus }) {
-  if (!OPENAI_KEY) {
+  if (!openai) {
     if (VERBOSE) {
-      console.log('[OPENAI] OPENAI_KEY 없음 → tagline fallback 사용');
+      const reason =
+        openaiUnavailableReason === 'MISSING_PROJECT'
+          ? 'OPENAI_PROJECT 없음'
+          : 'OPENAI_KEY 없음';
+      console.log(`[OPENAI] ${reason} → tagline fallback 사용`);
     }
     return buildPlaceTagline({ name, location, status: cuisineStatus });
   }

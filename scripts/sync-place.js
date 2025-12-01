@@ -24,6 +24,10 @@ const FORCE_GOOGLE = asBoolean(process.env.FORCE_GOOGLE);
 
 const COMPANY = { latitude: 37.529036, longitude: 126.966855 };
 
+const ALLOWED_MOODS = ['감성','힙한','조용한','가성비'];
+const ALLOWED_SERVICE = ['테이크아웃','배달','웨이팅','예약가능','포장전문']
+const ALLOWED_PARTY_SIZE = ['혼밥','데이트','단체']
+
 if (!GOOGLE_KEY) {
   console.warn('⚠️ GOOGLE_API_KEY 가 비어있습니다. 구글 관련 필드는 건너뜁니다.');
 } else if (VERBOSE) {
@@ -243,6 +247,87 @@ function readProp(page, key) {
   }
 }
 
+function normalizeTags(candidates, allowed) {
+  if (!Array.isArray(candidates)) return [];
+  return candidates
+    .map((x) => String(x).trim())
+    .filter(Boolean)
+    .filter((x, i, arr) => arr.indexOf(x) === i)
+    .filter((x) => allowed.includes(x));
+}
+
+async function classifyPlace({ name, location, status, summary }) {
+  if (!openai) {
+    if (VERBOSE) console.log('[CLASSIFY] OpenAI 없음 → 빈 태그 반환');
+    return { mood: [], service: [], partySize: null };
+  }
+
+  try {
+    const prompt = [
+      '다음 정보를 바탕으로 장소의 분위기(Mood), 서비스(Service), 추천 인원수(PartySize)를 태그로 분류하세요.',
+      '',
+      '반드시 아래 형식의 순수 JSON만 반환하세요:',
+      '{',
+      '  "mood": ["태그1", "태그2"],',
+      '  "service": ["태그1", "태그2"],',
+      '  "partySize": "1-2인 | 2-3인 | 3-4인 | 4인 이상 | 단체/회식"',
+      '}',
+      '',
+      '사용 가능한 Mood 태그:',
+      `- ${ALLOWED_MOODS.join(', ')}`,
+      '',
+      '사용 가능한 Service 태그:',
+      `- ${ALLOWED_SERVICE.join(', ')}`,
+      '',
+      'PartySize는 다음 중 하나만 사용:',
+      `- ${ALLOWED_PARTY_SIZE.join(', ')}`,
+      '',
+      `이름: ${name}`,
+      `지역: ${location || '-'}`,
+      `분류(Status): ${status || '-'}`,
+      `요약(Summary): ${summary || '-'}`,
+    ].join('\n');
+
+    const resp = await openai.responses.create({
+      model: 'gpt-4o-mini',
+      input: prompt,
+    });
+
+    let raw = resp.output_text?.trim?.() || '';
+
+    if (!raw && Array.isArray(resp.output)) {
+      const c = resp.output[0]?.content?.[0];
+      if (c?.type === 'output_text' && c?.text) raw = c.text.trim();
+      if (c?.type === 'json' && c?.json) raw = JSON.stringify(c.json);
+    }
+
+    if (VERBOSE) {
+      console.log('[CLASSIFY][RAW]', raw);
+    }
+
+    let data = {};
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      if (VERBOSE) console.warn('[CLASSIFY] JSON 파싱 실패');
+      return { mood: [], service: [], partySize: null };
+    }
+
+    const mood = normalizeTags(data.mood, ALLOWED_MOODS);
+    const service = normalizeTags(data.service, ALLOWED_SERVICE);
+    const partySize = ALLOWED_PARTY_SIZE.includes(data.partySize)
+      ? data.partySize
+      : null;
+
+    return { mood, service, partySize };
+  } catch (e) {
+    if (VERBOSE) {
+      console.warn('[CLASSIFY][ERROR]', e?.status || '', e?.message || e);
+    }
+    return { mood: [], service: [], partySize: null };
+  }
+}
+
 async function updateNotion(pageId, {
   Kakao,
   Summary,
@@ -253,6 +338,9 @@ async function updateNotion(pageId, {
   Image,
   Copyright,
   PriceCap,
+  Mood,
+  Service,
+  PartySize,
 }) {
   const props = {
     Kakao: Kakao ? { url: Kakao } : undefined,
@@ -278,6 +366,9 @@ async function updateNotion(pageId, {
       typeof PriceCap === 'number'
         ? { number: PriceCap }
         : undefined,
+    Mood: Array.isArray(Mood) && Mood.length ? { multi_select:Mood.map((name) => ({ name }))} : undefined,
+    Service: Array.isArray(Service) && Service.length ? { multi_select:Service.map((name) => ({ name }))} : undefined,
+    PartySize: PartySize ? { select: { name: PartySize } } : undefined,
 
     SyncTarget: { checkbox: false }
   };
@@ -430,6 +521,7 @@ async function getTargets() {
     const location = readProp(p, 'Location');
     const mood = readProp(p, 'Mood');
     const service = readProp(p, 'Service');
+    const partySize = readProp(p, 'PartySize');
 
     const hasKakao = readProp(p, 'Kakao');
     const hasSummary = readProp(p, 'Summary');
@@ -452,6 +544,9 @@ async function getTargets() {
       let Image = hasImage;
       let Copyright = hasCopyright;
       let PriceCap = hasPriceCap;
+      let MoodTags = mood;
+      let ServiceTags = service;
+      let PartySize = partySize;
 
       // Kakao + Status
       if ((!Kakao && !SKIP_KAKAO) || !Status) {
@@ -497,6 +592,37 @@ async function getTargets() {
               ? 'fallback'
               : 'openai';
           console.log(`[SUMMARY][${tag}]`, name, '→', out);
+        }
+      }
+
+      if (
+        !Array.isArray(MoodTags) || !MoodTags.length ||
+        !Array.isArray(ServiceTags) || !ServiceTags.length ||
+        !PartySize
+      ) {
+        const classification = await classifyPlace({
+          name,
+          location,
+          status: Status,
+          summary: Summary,
+        });
+      
+        if ((!MoodTags || !MoodTags.length) && classification.mood?.length) {
+          MoodTags = classification.mood;
+        }
+        if ((!ServiceTags || !ServiceTags.length) && classification.service?.length) {
+          ServiceTags = classification.service;
+        }
+        if (!PartySize && classification.partySize) {
+          PartySize = classification.partySize;
+        }
+      
+        if (VERBOSE) {
+          console.log('[CLASSIFY][RESULT]', name, {
+            Mood: MoodTags,
+            Service: ServiceTags,
+            PartySize,
+          });
         }
       }
 
@@ -595,6 +721,9 @@ async function getTargets() {
         Image,
         Copyright,
         PriceCap,
+        Mood: MoodTags,
+        Service: ServiceTags,
+        PartySize,
       });
 
       console.log(

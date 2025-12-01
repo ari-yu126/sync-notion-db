@@ -116,3 +116,10 @@ jobs:
           SKIP_KAKAO:         ${{ github.event.inputs.skip_kakao    || 'false' }}
           VERBOSE:            ${{ github.event.inputs.verbose       || 'true'  }}
         run: node scripts/sync-place.js
+
+    - name: Debug Google key
+      env:
+        GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      run: |
+        node -e "const k=(process.env.GOOGLE_API_KEY||'').trim(); console.log('ACTION LEN',k.length,'HEAD',k.slice(0,6));"
+

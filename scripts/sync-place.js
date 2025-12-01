@@ -278,6 +278,8 @@ async function updateNotion(pageId, {
       typeof PriceCap === 'number'
         ? { number: PriceCap }
         : undefined,
+
+    SyncTarget: { checkbox: false }
   };
 
   Object.keys(props).forEach((k) => {
@@ -393,6 +395,7 @@ async function getTargets() {
     filter: {
       and: [
         { property: 'Name', title: { is_not_empty: true } },
+        { property: 'SyncTarget', checkbox: { equals: true } },
         {
           or: [
             { property: 'Kakao', url: { is_empty: true } },

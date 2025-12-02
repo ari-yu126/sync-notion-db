@@ -296,7 +296,17 @@ async function updateNotion(pageId, {
         : undefined,
     Mood: Array.isArray(Mood) && Mood.length ? { multi_select:Mood.map((name) => ({ name }))} : undefined,
     Service: Array.isArray(Service) && Service.length ? { multi_select:Service.map((name) => ({ name }))} : undefined,
-    PartySize: Array.isArray(PartySize) && PartySize.length ? { multi_select: PartySize.map((name) => ({ name })) } : undefined,
+    PartySize: (() => {
+      const values = Array.isArray(PartySize)
+        ? PartySize
+        : typeof PartySize === 'string' && PartySize.trim()
+        ? [PartySize.trim()]
+        : [];
+      const normalized = normalizeTags(values, ALLOWED_PARTY_SIZE);
+      return normalized.length
+        ? { multi_select: normalized.map((name) => ({ name })) }
+        : undefined;
+    })(),
 
     SyncTarget: { checkbox: false }
   };
@@ -449,40 +459,72 @@ async function classifyPlace({ name, location, status, summary }) {
       if (c?.type === 'json' && c?.json) raw = JSON.stringify(c.json);
     }
 
-    // ```json 코드블럭 제거
-    if (raw.startsWith('```')) {
-      raw = raw
-        .replace(/^```(?:json)?\s*/i, '')
-        .replace(/```$/i, '')
-        .trim();
-    }
+    // 코드블럭 마크다운 완전히 제거 (시작과 끝 모두)
+    raw = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+    // 중괄호 앞뒤 공백 제거
+    raw = raw.replace(/^\s*\{/, '{').replace(/\}\s*$/, '}');
 
     if (VERBOSE) {
       console.log('[CLASSIFY][RAW]', raw);
     }
 
-    let data = {};
+    // 먼저 JSON 파싱 시도
+    let data = null;
     try {
       data = JSON.parse(raw);
-    } catch {
-      if (VERBOSE) console.warn('[CLASSIFY] JSON 파싱 실패');
-      return { mood: [], service: [], partySize: null };
+    } catch (e) {
+      if (VERBOSE) {
+        console.warn('[CLASSIFY] JSON 파싱 실패, 정규식으로 파싱 시도');
+      }
     }
 
-    const mood = normalizeTags(data.mood, ALLOWED_MOODS);
-    const service = normalizeTags(data.service, ALLOWED_SERVICE);
+    // JSON 파싱 성공한 경우
+    if (data && typeof data === 'object') {
+      const mood = Array.isArray(data.mood) 
+        ? normalizeTags(data.mood, ALLOWED_MOODS)
+        : [];
+      const service = Array.isArray(data.service)
+        ? normalizeTags(data.service, ALLOWED_SERVICE)
+        : [];
+      let partySize = null;
+      if (typeof data.partySize === 'string' && ALLOWED_PARTY_SIZE.includes(data.partySize)) {
+        partySize = data.partySize;
+      }
+      return { mood, service, partySize };
+    }
 
-    // partySize는 문자열 하나만 기대
-    let rawParty =
-      Array.isArray(data.partySize) && data.partySize.length
-        ? data.partySize[0]
-        : data.partySize;
+    // JSON 파싱 실패 시 정규식으로 파싱 (fallback)
+    const parseArrayField = (fieldName, allowed) => {
+      const re = new RegExp(`"${fieldName}"\\s*:\\s*\\[(.*?)\\]`, 's');
+      const m = raw.match(re);
+      if (!m) return [];
+      const inner = m[1]; // "감성", "조용한"
+      const parts = inner
+        .split(',')
+        .map((s) => s.replace(/["'\s]/g, '').trim())
+        .filter(Boolean);
+      return normalizeTags(parts, allowed);
+    };
 
+    // mood, service 배열 파싱
+    const mood = parseArrayField('mood', ALLOWED_MOODS);
+    const service = parseArrayField('service', ALLOWED_SERVICE);
+
+    // partySize는 문자열 하나 (여러 패턴 시도)
     let partySize = null;
-    if (typeof rawParty === 'string') {
-      const trimmed = rawParty.trim();
-      if (ALLOWED_PARTY_SIZE.includes(trimmed)) {
-        partySize = trimmed;
+    const patterns = [
+      /"partySize"\s*:\s*"([^"]+)"/,
+      /partySize["\s]*:\s*["']([^"']+)["']/,
+      /partySize["\s]*:\s*(\w+)/,
+    ];
+    for (const pattern of patterns) {
+      const mParty = raw.match(pattern);
+      if (mParty) {
+        const v = mParty[1].trim();
+        if (ALLOWED_PARTY_SIZE.includes(v)) {
+          partySize = v;
+          break;
+        }
       }
     }
 
@@ -494,6 +536,7 @@ async function classifyPlace({ name, location, status, summary }) {
     return { mood: [], service: [], partySize: null };
   }
 }
+
 
 // ───── 대상 조회
 async function getTargets() {
@@ -535,6 +578,7 @@ async function getTargets() {
   }
 
   for (const p of pages) {
+    if (VERBOSE) console.log('PartySize property type from API:', p.properties?.PartySize?.type);
     const id = p.id;
     const name = readProp(p, 'Name');
     const location = readProp(p, 'Location');

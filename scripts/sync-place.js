@@ -24,8 +24,8 @@ const FORCE_GOOGLE = asBoolean(process.env.FORCE_GOOGLE);
 
 const COMPANY = { latitude: 37.529036, longitude: 126.966855 };
 
-const ALLOWED_PARTY_SIZE = ['혼밥','데이트','단체']
-const ALLOWED_MOODS = ['감성','힙한','조용한','가성비'];
+const ALLOWED_PARTY_SIZE = ['혼밥','단체']
+const ALLOWED_MOODS = ['감성','힙한','조용한','가성비', '데이트'];
 const ALLOWED_SERVICE = ['테이크아웃','배달','웨이팅','예약가능','포장전문']
 
 if (!GOOGLE_KEY) {

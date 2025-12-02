@@ -296,7 +296,7 @@ async function updateNotion(pageId, {
         : undefined,
     Mood: Array.isArray(Mood) && Mood.length ? { multi_select:Mood.map((name) => ({ name }))} : undefined,
     Service: Array.isArray(Service) && Service.length ? { multi_select:Service.map((name) => ({ name }))} : undefined,
-    PartySize: PartySize ? { select: { name: PartySize } } : undefined,
+    PartySize: Array.isArray(PartySize) && PartySize.length ? { multi_select: PartySize.map((name) => ({ name })) } : undefined,
 
     SyncTarget: { checkbox: false }
   };
@@ -376,10 +376,15 @@ async function createSummary({ name, location, mood, service, status: cuisineSta
       if (!raw) console.warn('[OPENAI] empty output_text');
     }
 
+    if (raw.startsWith('```')) {
+      raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```$/,'').trim();
+    }
+    
     let data = null;
     try {
       data = JSON.parse(raw);
     } catch {
+      if (VERBOSE) console.warn('[SUMMARY] JSON 파싱 실패');
       data = { summary: raw };
     }
 
@@ -444,6 +449,14 @@ async function classifyPlace({ name, location, status, summary }) {
       if (c?.type === 'json' && c?.json) raw = JSON.stringify(c.json);
     }
 
+    // ```json 코드블럭 제거
+    if (raw.startsWith('```')) {
+      raw = raw
+        .replace(/^```(?:json)?\s*/i, '')
+        .replace(/```$/i, '')
+        .trim();
+    }
+
     if (VERBOSE) {
       console.log('[CLASSIFY][RAW]', raw);
     }
@@ -458,9 +471,20 @@ async function classifyPlace({ name, location, status, summary }) {
 
     const mood = normalizeTags(data.mood, ALLOWED_MOODS);
     const service = normalizeTags(data.service, ALLOWED_SERVICE);
-    const partySize = ALLOWED_PARTY_SIZE.includes(data.partySize)
-      ? data.partySize
-      : null;
+
+    // partySize는 문자열 하나만 기대
+    let rawParty =
+      Array.isArray(data.partySize) && data.partySize.length
+        ? data.partySize[0]
+        : data.partySize;
+
+    let partySize = null;
+    if (typeof rawParty === 'string') {
+      const trimmed = rawParty.trim();
+      if (ALLOWED_PARTY_SIZE.includes(trimmed)) {
+        partySize = trimmed;
+      }
+    }
 
     return { mood, service, partySize };
   } catch (e) {
@@ -470,7 +494,6 @@ async function classifyPlace({ name, location, status, summary }) {
     return { mood: [], service: [], partySize: null };
   }
 }
-
 
 // ───── 대상 조회
 async function getTargets() {
@@ -542,7 +565,7 @@ async function getTargets() {
       let PriceCap = hasPriceCap;
       let MoodTags = mood;
       let ServiceTags = service;
-      let PartySize = partySize;
+      let PartySizeTags = partySize;
 
       // Kakao + Status
       if ((!Kakao && !SKIP_KAKAO) || !Status) {
@@ -577,6 +600,7 @@ async function getTargets() {
           location,
           mood: MoodTags,
           service: ServiceTags,
+          partySize: PartySizeTags,
           status: Status,
         });
         Summary = out;
@@ -594,7 +618,7 @@ async function getTargets() {
       if (
         !Array.isArray(MoodTags) || !MoodTags.length ||
         !Array.isArray(ServiceTags) || !ServiceTags.length ||
-        !PartySize
+        !Array.isArray(PartySizeTags) || !PartySizeTags.length
       ) {
         const classification = await classifyPlace({
           name,
@@ -609,18 +633,19 @@ async function getTargets() {
         if ((!ServiceTags || !ServiceTags.length) && classification.service?.length) {
           ServiceTags = classification.service;
         }
-        if (!PartySize && classification.partySize) {
-          PartySize = classification.partySize;
+        if ((!PartySizeTags || !PartySizeTags.length) && classification.partySize) {
+          // ← 여기! 문자열 하나를 배열로 바꿔서 넣기
+          PartySizeTags = [classification.partySize];
         }
       
         if (VERBOSE) {
           console.log('[CLASSIFY][RESULT]', name, {
             Mood: MoodTags,
             Service: ServiceTags,
-            PartySize,
+            PartySize: PartySizeTags,
           });
         }
-      }
+      }      
 
       // Google (Score / GoogleMap / GooglePlaceID / Image / PriceCap)
       if (
@@ -719,7 +744,7 @@ async function getTargets() {
         PriceCap,
         Mood: MoodTags,
         Service: ServiceTags,
-        PartySize,
+        PartySize: PartySizeTags,
       });
 
       console.log(

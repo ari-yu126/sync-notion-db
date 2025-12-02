@@ -297,6 +297,7 @@ async function updateNotion(pageId, {
     Mood: Array.isArray(Mood) && Mood.length ? { multi_select:Mood.map((name) => ({ name }))} : undefined,
     Service: Array.isArray(Service) && Service.length ? { multi_select:Service.map((name) => ({ name }))} : undefined,
     PartySize: (() => {
+      // PartySize는 multi_select이므로 배열로 처리
       const values = Array.isArray(PartySize)
         ? PartySize
         : typeof PartySize === 'string' && PartySize.trim()
@@ -426,10 +427,15 @@ async function classifyPlace({ name, location, status, summary }) {
       '',
       '반드시 아래 형식의 순수 JSON만 반환하세요:',
       '{',
-      '  "mood": ["태그1", "태그2"],',
-      '  "service": ["태그1", "태그2"],',
-      '  "partySize": "<태그1>"',
+      '  "mood": ["태그1", "태그2", ...],  // 0개 이상, 적절한 개수만 선택',
+      '  "service": ["태그1", "태그2", ...],  // 0개 이상, 적절한 개수만 선택',
+      '  "partySize": "<태그1>"  // 1개만 선택',
       '}',
+      '',
+      '규칙:',
+      '- Mood와 Service는 0개, 1개, 2개, 또는 그 이상 모두 가능합니다',
+      '- 장소의 특성에 맞는 태그만 선택하세요 (없으면 빈 배열 [])',
+      '- PartySize는 반드시 1개만 선택하세요',
       '',
       '사용 가능한 Mood 태그:',
       `- ${ALLOWED_MOODS.join(', ')}`,
